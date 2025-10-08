@@ -6,13 +6,19 @@ streamlit
 # Thư viện xử lý dữ liệu chính
 pandas
 
+numpy
+
 # Thư viện cho chức năng AI (sử dụng Gemini API)
 google-genai
 
-# Thư viện cần thiết để pandas đọc và ghi file Excel (.xlsx)
-openpyxl
+# Thư viện cần thiết để xử lý file Word (.docx)
+python-docx
 
-# THÊM THƯ VIỆN NÀY ĐỂ GIẢI QUYẾT LỖI to_markdown()
+# Thư viện cho xử lý file Excel (nếu cần cho các chức năng khác sau này)
+openpyxl 
+
+# tabulate (giữ lại vì có thể hữu ích cho to_markdown() trong một số môi trường)
 tabulate
 
 google-generativeai
+
