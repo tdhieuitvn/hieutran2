@@ -32,7 +32,8 @@ def extract_project_data_with_ai(text, api_key):
     """Sử dụng Gemini AI để trích xuất thông tin tài chính từ văn bản."""
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro')
+        # Sử dụng model 'gemini-1.0-pro' để tăng tính tương thích
+        model = genai.GenerativeModel('gemini-1.0-pro')
         
         prompt = f"""
         Bạn là một chuyên gia phân tích tài chính. Hãy đọc kỹ văn bản phương án kinh doanh sau và trích xuất các thông tin sau đây dưới dạng JSON.
@@ -72,8 +73,8 @@ def calculate_cash_flow(data):
         tax = ebt * tax_rate
         pat = ebt - tax
         
-        # Giả định đơn giản: Dòng tiền thuần = Lợi nhuận sau thuế + Chi phí khấu hao.
-        # Vì không có thông tin khấu hao, ta tạm tính NCF = PAT.
+        # Giả định đơn giản: Dòng tiền thuần = Lợi nhuận sau thuế (PAT).
+        # Trong thực tế, NCF = PAT + Khấu hao. Vì không có dữ liệu khấu hao, ta tạm bỏ qua.
         ncf_op = pat
 
         # Tạo DataFrame
@@ -105,14 +106,22 @@ def calculate_financial_metrics(df, wacc):
         
         # PP (Payback Period)
         cumulative_cash_flow = ncf.cumsum()
-        pp_years = next((i for i, x in enumerate(cumulative_cash_flow) if x > 0), None)
-        pp = pp_years - (cumulative_cash_flow[pp_years-1] / ncf[pp_years]) if pp_years is not None else "Không hoàn vốn"
+        pp_years_list = [i for i, x in enumerate(cumulative_cash_flow) if x > 0]
+        if not pp_years_list:
+            pp = "Không hoàn vốn"
+        else:
+            pp_years = pp_years_list[0]
+            pp = pp_years - (cumulative_cash_flow[pp_years-1] / ncf[pp_years])
 
         # DPP (Discounted Payback Period)
         discounted_ncf = [val / ((1 + wacc) ** i) for i, val in enumerate(ncf)]
         cumulative_discounted_ncf = pd.Series(discounted_ncf).cumsum()
-        dpp_years = next((i for i, x in enumerate(cumulative_discounted_ncf) if x > 0), None)
-        dpp = dpp_years - (cumulative_discounted_ncf[dpp_years-1] / discounted_ncf[dpp_years]) if dpp_years is not None else "Không hoàn vốn"
+        dpp_years_list = [i for i, x in enumerate(cumulative_discounted_ncf) if x > 0]
+        if not dpp_years_list:
+             dpp = "Không hoàn vốn"
+        else:
+            dpp_years = dpp_years_list[0]
+            dpp = dpp_years - (cumulative_discounted_ncf[dpp_years-1] / discounted_ncf[dpp_years])
         
         return {"NPV": npv, "IRR": irr, "PP": pp, "DPP": dpp}
     except Exception as e:
@@ -123,7 +132,11 @@ def get_ai_analysis(metrics_data, api_key):
     """Yêu cầu AI phân tích các chỉ số hiệu quả dự án."""
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro')
+        # Sử dụng model 'gemini-1.0-pro' để tăng tính tương thích
+        model = genai.GenerativeModel('gemini-1.0-pro')
+        
+        pp_text = f"{metrics_data['PP']:.2f} năm" if isinstance(metrics_data['PP'], (int, float)) else metrics_data['PP']
+        dpp_text = f"{metrics_data['DPP']:.2f} năm" if isinstance(metrics_data['DPP'], (int, float)) else metrics_data['DPP']
         
         prompt = f"""
         Bạn là một chuyên gia thẩm định dự án đầu tư. Dựa trên các chỉ số hiệu quả tài chính sau đây, hãy đưa ra một bài phân tích ngắn gọn, chuyên nghiệp (khoảng 3-4 đoạn).
@@ -131,8 +144,8 @@ def get_ai_analysis(metrics_data, api_key):
         Các chỉ số cần phân tích:
         - NPV: {metrics_data['NPV']:,.0f} VNĐ
         - IRR: {metrics_data['IRR']:.2f}%
-        - Thời gian hoàn vốn (PP): {metrics_data['PP']:.2f} năm
-        - Thời gian hoàn vốn có chiết khấu (DPP): {metrics_data['DPP']:.2f} năm
+        - Thời gian hoàn vốn (PP): {pp_text}
+        - Thời gian hoàn vốn có chiết khấu (DPP): {dpp_text}
 
         Nội dung phân tích cần bao gồm:
         1. Giải thích ý nghĩa của từng chỉ số trong bối cảnh dự án này.
@@ -157,55 +170,60 @@ if 'project_data' not in st.session_state:
     st.session_state.project_data = None
 if 'analysis_done' not in st.session_state:
     st.session_state.analysis_done = False
+if 'df_cash_flow' not in st.session_state:
+    st.session_state.df_cash_flow = None
+
 
 if uploaded_file is not None:
+    # Clear state khi có file mới
+    st.session_state.project_data = None
+    st.session_state.analysis_done = False
+    st.session_state.df_cash_flow = None
+
     doc_text = read_docx_text(BytesIO(uploaded_file.getvalue()))
     
     if doc_text and api_key:
         if st.button("1. Trích xuất dữ liệu với AI"):
             with st.spinner("AI đang đọc và phân tích file..."):
                 st.session_state.project_data = extract_project_data_with_ai(doc_text, api_key)
-                st.session_state.analysis_done = False # Reset khi có dữ liệu mới
             
             if st.session_state.project_data:
                 st.success("Đã trích xuất dữ liệu thành công!")
+                st.session_state.df_cash_flow = calculate_cash_flow(st.session_state.project_data)
+                if st.session_state.df_cash_flow is not None:
+                     st.session_state.analysis_done = True
             else:
                 st.error("Không thể trích xuất dữ liệu. Vui lòng kiểm tra lại file Word hoặc API Key.")
 
-    if st.session_state.project_data:
-        st.subheader("Bảng tóm tắt thông số dự án")
-        st.json(st.session_state.project_data)
+if st.session_state.project_data:
+    st.subheader("Bảng tóm tắt thông số dự án")
+    st.json(st.session_state.project_data)
+    
+if st.session_state.df_cash_flow is not None:
+    st.subheader("2. Bảng Dòng Tiền Dự Kiến (Đơn vị: VNĐ)")
+    st.dataframe(st.session_state.df_cash_flow.style.format("{:,.0f}"))
+    
+    metrics = calculate_financial_metrics(st.session_state.df_cash_flow, st.session_state.project_data['wacc'])
+    
+    if metrics:
+        st.subheader("3. Các Chỉ Số Đánh Giá Hiệu Quả Dự Án")
         
-        # Tính toán và hiển thị
-        df_cash_flow = calculate_cash_flow(st.session_state.project_data)
+        col1, col2 = st.columns(2)
+        col3, col4 = st.columns(2)
         
-        if df_cash_flow is not None:
-            st.subheader("2. Bảng Dòng Tiền Dự Kiến (Đơn vị: VNĐ)")
-            st.dataframe(df_cash_flow.style.format("{:,.0f}"))
+        col1.metric("NPV (Giá trị hiện tại ròng)", f"{metrics['NPV']:,.0f} VNĐ")
+        col2.metric("IRR (Tỷ suất hoàn vốn nội bộ)", f"{metrics['IRR']:.2f}%")
+        col3.metric("Thời gian hoàn vốn (PP)", f"{metrics['PP']:.2f} năm" if isinstance(metrics['PP'], (int, float)) else metrics['PP'])
+        col4.metric("Thời gian hoàn vốn có chiết khấu (DPP)", f"{metrics['DPP']:.2f} năm" if isinstance(metrics['DPP'], (int, float)) else metrics['DPP'])
 
-            metrics = calculate_financial_metrics(df_cash_flow, st.session_state.project_data['wacc'])
-            
-            if metrics:
-                st.subheader("3. Các Chỉ Số Đánh Giá Hiệu Quả Dự Án")
-                st.session_state.analysis_done = True
-                
-                col1, col2 = st.columns(2)
-                col3, col4 = st.columns(2)
-                
-                col1.metric("NPV (Giá trị hiện tại ròng)", f"{metrics['NPV']:,.0f} VNĐ")
-                col2.metric("IRR (Tỷ suất hoàn vốn nội bộ)", f"{metrics['IRR']:.2f}%")
-                col3.metric("Thời gian hoàn vốn (PP)", f"{metrics['PP']:.2f} năm" if isinstance(metrics['PP'], (int, float)) else "N/A")
-                col4.metric("Thời gian hoàn vốn có chiết khấu (DPP)", f"{metrics['DPP']:.2f} năm" if isinstance(metrics['DPP'], (int, float)) else "N/A")
+if st.session_state.analysis_done:
+    st.subheader("4. Phân Tích Hiệu Quả Dự Án từ AI")
+    if st.button("Yêu cầu AI Phân Tích"):
+        if api_key:
+            with st.spinner("AI đang phân tích các chỉ số..."):
+                metrics = calculate_financial_metrics(st.session_state.df_cash_flow, st.session_state.project_data['wacc'])
+                ai_feedback = get_ai_analysis(metrics, api_key)
+                st.info(ai_feedback)
+        else:
+            st.warning("Vui lòng nhập API Key để thực hiện phân tích.")
 
-    if st.session_state.analysis_done:
-        st.subheader("4. Phân Tích Hiệu Quả Dự Án từ AI")
-        if st.button("Yêu cầu AI Phân Tích"):
-            if api_key:
-                with st.spinner("AI đang phân tích các chỉ số..."):
-                    metrics = calculate_financial_metrics(df_cash_flow, st.session_state.project_data['wacc'])
-                    ai_feedback = get_ai_analysis(metrics, api_key)
-                    st.info(ai_feedback)
-            else:
-                st.error("Vui lòng nhập API Key để thực hiện phân tích.")
-else:
-    st.info("Vui lòng nhập API Key và tải lên file .docx để bắt đầu.")
